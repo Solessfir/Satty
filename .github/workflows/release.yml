@@ -1,126 +1,77 @@
-name: release
+name: Release Build
 
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
 
 jobs:
-  release:
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-            container: ghcr.io/gtk-rs/gtk4-rs/gtk4:latest
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            archive: tar.gz
-            container: ""
-
     runs-on: ${{ matrix.os }}
-    # x86_64 builds in the gtk4-rs Fedora container (yum); aarch64 runs natively
-    # on GitHub's free arm64 runner with GTK installed via apt (empty container).
-    container: ${{ matrix.container }}
-    environment: release
-
-    permissions:
-      contents: write
-
     steps:
-      - name: Install dependencies (Fedora container, x86_64)
-        if: matrix.container != ''
-        run: yum install -y gtk4-devel libadwaita-devel
-
-      - name: Install dependencies (Ubuntu host, aarch64)
-        if: matrix.container == ''
+      - uses: actions/checkout@v7
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
-
-      - uses: actions/checkout@v7
-
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libepoxy-dev libfontconfig1-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           targets: ${{ matrix.target }}
-
-      - name: Cache Dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} --features ci-release
-
-      - name: Pack Artifacts
+      - uses: Swatinem/rust-cache@v2
+      - name: Check installer
+        run: bash scripts/test-install-bin.sh
+      - name: Build and test
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} --features ci-release
+          cargo test --release --locked --target ${{ matrix.target }} --features ci-release
+      - name: Package
         env:
           RELEASE_NAME: satty-${{ matrix.target }}
-          ARTIFACTS_DIR: target/${{ matrix.target }}/release
         run: |
-          mkdir $RELEASE_NAME
-          cp target/${{ matrix.target }}/release/satty -t $RELEASE_NAME
-          cp -r completions -t $RELEASE_NAME
-          cp -r man -t $RELEASE_NAME
-          cp -r README.md assets LICENSE satty.desktop -t $RELEASE_NAME
-          tar -zcvf $RELEASE_NAME.${{ matrix.archive }} -C $RELEASE_NAME .
-
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+          mkdir "$RELEASE_NAME"
+          strip "target/${{ matrix.target }}/release/satty"
+          cp "target/${{ matrix.target }}/release/satty" "$RELEASE_NAME/"
+          cp -r completions man assets README.md LICENSE satty.desktop "$RELEASE_NAME/"
+          tar -czf "$RELEASE_NAME.tar.gz" -C "$RELEASE_NAME" .
+          sha256sum "$RELEASE_NAME.tar.gz" > "$RELEASE_NAME.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
         with:
-          files: satty-${{ matrix.target }}.${{ matrix.archive }}
+          name: satty-${{ matrix.target }}
+          path: |
+            satty-${{ matrix.target }}.tar.gz
+            satty-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
 
-  flatpak:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
-      options: --privileged
-    environment: release
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-
-      - name: Configure git safe directory
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
         with:
-          manifest-path: org.satty.Satty.yml
-          bundle: satty-${{ github.ref_name }}.flatpak
-          branch: ${{ github.ref_name }}
-          cache-key: flatpak-builder-${{ github.sha }}
-
-      - name: Release Flatpak
-        uses: softprops/action-gh-release@v1
-        with:
-          files: satty-${{ github.ref_name }}.flatpak
-
-  publish:
-    runs-on: ubuntu-latest
-    # Re-publish to crates.io is not possible if this fails. As a precaution, depend
-    # on successful release job.
-    needs: release
-    container: ghcr.io/gtk-rs/gtk4-rs/gtk4:latest
-    environment: release
-
-    steps:
-      - name: Install dependencies
-        run: yum install -y gtk4-devel libadwaita-devel
-
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish satty (workspace)
-        run: cargo publish --locked --workspace
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          files: |
+            satty-*.tar.gz
+            satty-*.tar.gz.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
