@@ -28,6 +28,8 @@ corner-roundness = 12
 initial-tool = "brush"
 # One-based palette color to select on startup (default: 1).
 initial-color = 1
+# Copy after a successful Save or Save As: none, image, or file-path (default: none).
+copy-on-save = "none"
 # Configure the command to be called on copy, for example `wl-copy`
 copy-command = "wl-copy"
 # Increase or decrease the size of the annotations

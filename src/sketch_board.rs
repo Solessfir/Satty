@@ -17,7 +17,7 @@ use gtk::prelude::*;
 use relm4::gtk::gdk::{self, DisplayManager, Key, ModifierType, Texture};
 use relm4::{Component, ComponentParts, ComponentSender, RelmWidgetExt, gtk};
 
-use crate::configuration::{APP_CONFIG, Action};
+use crate::configuration::{APP_CONFIG, Action, CopyOnSave};
 use crate::femtovg_area::FemtoVGArea;
 use crate::image_loading;
 use crate::ime::pango_adapter::spans_from_pango_attrs;
@@ -479,8 +479,8 @@ impl SketchBoard {
                 }
                 Action::SaveToFile => {
                     if let Some(ref pix_buf) = pix_buf {
-                        self.handle_save(pix_buf);
-                        early_exit = APP_CONFIG.read().early_exit_save();
+                        early_exit =
+                            self.handle_save(pix_buf) && APP_CONFIG.read().early_exit_save();
                     }
                 }
                 /* SaveToFileAs runs through a callback, so any further actions need to be triggered
@@ -629,17 +629,38 @@ impl SketchBoard {
         fs::write(path, data)
     }
 
-    fn handle_save(&self, image: &Pixbuf) {
+    fn copy_after_save(&self, image: &Pixbuf) {
+        match APP_CONFIG.read().copy_on_save() {
+            CopyOnSave::None => (),
+            CopyOnSave::FilePath => self.handle_copy_filepath(),
+            CopyOnSave::Image => {
+                let texture = Texture::for_pixbuf(image);
+                let result = if let Some(command) = APP_CONFIG.read().copy_command() {
+                    self.save_texture_to_external_process(&texture, command)
+                } else {
+                    self.save_texture_to_clipboard(&texture)
+                };
+                if let Err(error) = result {
+                    log_result(
+                        &format!("File saved, but clipboard copy failed: {error}"),
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    fn handle_save(&self, image: &Pixbuf) -> bool {
         let output_filename = match APP_CONFIG.read().output_filename() {
             None => {
                 eprintln!("No Output filename specified!");
-                return;
+                return false;
             }
             Some(o) => o.clone(),
         };
 
         let Some(output_filename) = Self::resolve_output_filename(&output_filename) else {
-            return;
+            return false;
         };
 
         // TODO: we could support more data types
@@ -648,14 +669,14 @@ impl SketchBoard {
                 "The only supported format is png, but the filename does not end in png",
                 true,
             );
-            return;
+            return false;
         }
 
         let data = match image.save_to_bufferv("png", &Vec::new()) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("Error serializing image: {e}");
-                return;
+                return false;
             }
         };
 
@@ -665,20 +686,26 @@ impl SketchBoard {
             let mut handle = stdout.lock();
             if let Err(e) = handle.write_all(&data) {
                 eprintln!("Error writing image to stdout: {e}");
+                return false;
             }
-            return;
+            return true;
         }
         match Self::write_image_file(Path::new(&output_filename), &data) {
-            Err(e) => log_result(&format!("Error while saving file: {e}"), true),
+            Err(e) => {
+                log_result(&format!("Error while saving file: {e}"), true);
+                false
+            }
             Ok(_) => {
                 // Store the filepath for copy-filepath action
                 *self.last_saved_filepath.borrow_mut() = Some(output_filename.clone());
                 log_result_with_pixbuf(
                     &format!("File saved to '{}'.", output_filename),
                     image.clone(),
-                )
+                );
+                self.copy_after_save(image);
+                true
             }
-        };
+        }
     }
 
     fn handle_save_as(
@@ -734,7 +761,6 @@ impl SketchBoard {
             }
 
             dialog.connect_response(move |dialog, response| {
-                let mut exit_app = false;
                 let mut filename: Option<String> = None;
                 if response == gtk::ResponseType::Accept
                     && let Some(file) = dialog.file()
@@ -747,7 +773,6 @@ impl SketchBoard {
                     match Self::write_image_file(Path::new(&output_filename), &data) {
                         Err(e) => log_result(&format!("Error while saving file: {e}"), true),
                         Ok(_) => {
-                            exit_app = APP_CONFIG.read().early_exit_save_as();
                             filename = Some(output_filename.clone());
                             Self::remember_save_as_dir(Path::new(&output_filename));
                             log_result_with_pixbuf(
@@ -757,10 +782,7 @@ impl SketchBoard {
                         }
                     };
                 }
-                if exit_app {
-                    log_result("early exit after save as, ignoring further actions.", false);
-                    sender.input(SketchBoardInput::Exit);
-                } else if filename.is_some() || !followup_actions.is_empty() {
+                if filename.is_some() || !followup_actions.is_empty() {
                     let followup_actions_clone = followup_actions.clone();
                     let pixbuf_clone = Some(pixbuf.clone());
                     sender.input(SketchBoardInput::RenderResultFollowup(
@@ -859,7 +881,10 @@ impl SketchBoard {
 
         match result {
             Err(e) => log_result(&format!("Error copying filepath: {e}"), true),
-            Ok(()) => log_result(&format!("Filepath copied to clipboard: {}", filepath), true),
+            Ok(()) => log_result(
+                &format!("Filepath copied to clipboard: {}", filepath),
+                false,
+            ),
         }
     }
 
@@ -1907,8 +1932,15 @@ impl Component for SketchBoard {
                 ToolUpdateResult::Unmodified
             }
             SketchBoardInput::RenderResultFollowup(pix_buf, action, filename) => {
-                if filename.is_some() {
-                    *self.last_saved_filepath.borrow_mut() = filename;
+                if let Some(filename) = filename {
+                    *self.last_saved_filepath.borrow_mut() = Some(filename);
+                    if let Some(ref image) = pix_buf {
+                        self.copy_after_save(image);
+                    }
+                    if APP_CONFIG.read().early_exit_save_as() {
+                        self.handle_exit();
+                        return;
+                    }
                 }
                 self.handle_render_result_with_pixbuf(pix_buf, action, sender);
                 ToolUpdateResult::Unmodified
