@@ -760,7 +760,11 @@ impl Component for StyleToolbar {
         // Color Action for selecting colors
         let sender_tmp: ComponentSender<StyleToolbar> = sender.clone();
         let color_action: RelmAction<ColorAction> = RelmAction::new_stateful_with_target_value(
-            &ColorButtons::Palette(0),
+            &if APP_CONFIG.read().color_palette().palette().is_empty() {
+                ColorButtons::Custom
+            } else {
+                ColorButtons::Palette(APP_CONFIG.read().initial_color_index() as u64)
+            },
             move |_, state, value| {
                 *state = value;
                 sender_tmp.input(StyleToolbarInput::ColorButtonSelected(value));

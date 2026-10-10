@@ -50,11 +50,11 @@ impl Default for Style {
 
 impl Default for Color {
     fn default() -> Self {
-        APP_CONFIG
-            .read()
+        let config = APP_CONFIG.read();
+        config
             .color_palette()
             .palette()
-            .first()
+            .get(config.initial_color_index())
             .copied()
             .unwrap_or(Color::red())
     }

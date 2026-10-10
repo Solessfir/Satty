@@ -68,6 +68,7 @@ pub struct Configuration {
     early_exit: EarlyExit,
     corner_roundness: f32,
     initial_tool: Tools,
+    initial_color: usize,
     copy_command: Option<String>,
     annotation_size_factor: f32,
     save_after_copy: bool,
@@ -307,6 +308,9 @@ impl Configuration {
         }
         if let Some(v) = general.initial_tool {
             self.initial_tool = v;
+        }
+        if let Some(v) = general.initial_color {
+            self.initial_color = v;
         }
         if let Some(v) = general.copy_command {
             self.copy_command = Some(v);
@@ -586,6 +590,13 @@ impl Configuration {
         self.initial_tool
     }
 
+    pub fn initial_color_index(&self) -> usize {
+        self.initial_color
+            .checked_sub(1)
+            .filter(|index| *index < self.color_palette.palette().len())
+            .unwrap_or(0)
+    }
+
     pub fn copy_command(&self) -> Option<&String> {
         self.copy_command.as_ref()
     }
@@ -736,6 +747,7 @@ impl Default for Configuration {
             early_exit: EarlyExit::default(),
             corner_roundness: 12.0,
             initial_tool: Tools::Pointer,
+            initial_color: 1,
             copy_command: None,
             annotation_size_factor: 1.0,
             save_after_copy: false,
@@ -823,6 +835,7 @@ struct ConfigurationFileGeneral {
     early_exit: Option<Vec<EarlyExitTriggers>>,
     corner_roundness: Option<f32>,
     initial_tool: Option<Tools>,
+    initial_color: Option<usize>,
     copy_command: Option<String>,
     annotation_size_factor: Option<f32>,
     save_after_copy: Option<bool>,
