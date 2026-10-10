@@ -18,6 +18,18 @@ Satty has been created to provide the following improvements over existing scree
 ## Install
 <!-- --8<-- [start:install] -->
 
+### This fork
+
+Install the latest [Solessfir/Satty release](https://github.com/Solessfir/Satty/releases) on Linux x86-64 or ARM64:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Solessfir/Satty/main/install-bin.sh | bash
+```
+
+The installer verifies the archive checksum and installs to `~/.local` without sudo. Set `PREFIX` to change the install location, and ensure its `bin` directory is in `PATH`.
+
+These binaries require glibc 2.39 or newer and the GTK 4, libadwaita, libepoxy and fontconfig runtime libraries. On Arch/CachyOS, install them with `sudo pacman -S gtk4 libadwaita libepoxy fontconfig`. Other distributions may need the corresponding packages; older systems should build from source.
+
 Thanks to our package maintainers, Satty is available for many distributions on Linux and BSD:
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/satty.svg)](https://repology.org/project/satty/versions)
@@ -56,6 +68,15 @@ flatpak install satty-<version>.flatpak
 ## Usage
 <!-- --8<-- [start:usage] -->
 
+This fork adds the following optional `[general]` settings:
+
+```toml
+scroll-image-navigation = true    # Plain wheel browses images in the input file's folder.
+transparency-checkerboard = false # Show the `.inner_box` CSS background-color behind transparent pixels.
+```
+
+Wheel navigation uses filename order, stops at the folder boundaries and asks before discarding annotations. To browse with keys instead, bind `next-image` and `previous-image` under `[keybinds]`, for example `"Right" = "next-image"`; they are unbound by default. Ctrl+wheel zoom and touchpad pan remain available. Save and Save As create missing directories. Turning off the transparency checkerboard tells real transparency apart from a checkerboard baked into an image: transparent pixels then show the `.inner_box` `background-color`, which `overrides.css` can set. The new settings default to upstream behavior: wheel pan and the checkerboard. One default shortcut differs from upstream: <kbd>Ctrl+Shift+C</kbd> copies an exported image path instead of the saved file path, which moved to <kbd>Ctrl+Alt+C</kbd>.
+
 Start by providing a filename or a screenshot via stdin and annotate using the available tools. Save to clipboard or file when finished. Tools and Interface have been kept simple.
 
 The order of configuration is:
@@ -75,6 +96,7 @@ The order of configuration is:
 - <kbd>Esc</kbd>: as configured (see below), default: exit (may be masked by active tool)
 - <kbd>Shift+Delete</kbd> reset (clear) <sup>experimental</sup> <sup>NEXTRELEASE</sup>
 - <kbd>Ctrl+C</kbd>: Save to clipboard (may be masked by active tool)
+- <kbd>Ctrl+Shift+C</kbd>: Export current edits to a timestamped temporary PNG and copy its path. The file remains available after Satty closes; it is not saved to Screenshots.
 - <kbd>Ctrl+Shift+D</kbd> or <kbd>Ctrl+Shift+I</kbd>: Open GTK inspector if not already opened
 - <kbd>Ctrl+S</kbd>: Save to specified output file
 - <kbd>Ctrl+Shift+S</kbd>: Save using file dialog <sup>0.20.0</sup>. The dialog uses `output-filename` as initial filename/path when available and remembers the last selected folder. <sup>0.21.0</sup>
@@ -82,6 +104,8 @@ The order of configuration is:
 - <kbd>Ctrl+T</kbd>: Toggle toolbars
 - <kbd>Ctrl+Y</kbd>: Redo
 - <kbd>Ctrl+Z</kbd>: Undo
+- <kbd>Alt+1</kbd>: Show the image at 100%, with one image pixel per physical display pixel. Fractional display scaling requires GTK 4.12 or newer; older GTK versions use integer scaling.
+- <kbd>Ctrl+1</kbd>: Fit the image to the window. Fitting and other zoom levels resample the image; use 100% to inspect screenshot text and individual pixels.
 - <kbd>Alt</kbd>+(<kbd>Left</kbd>/<kbd>Right</kbd>/<kbd>Up</kbd>/<kbd>Down</kbd>): Pan, also available with middle mouse button drag <sup>0.20.1</sup>
 
 Mouse:
@@ -261,6 +285,10 @@ aspect-ratios = [[1, 1], [1, 2], [5, 4], [4, 3], [7, 5], [3, 2], [16, 9]]
 corner-roundness = 12
 # Select the tool on startup [possible values: see `satty --help`]
 initial-tool = "brush"
+# Plain mouse wheel browses supported images in the input file's directory (default: false).
+scroll-image-navigation = false
+# Draw a checkerboard behind transparent pixels; when off they show the `.inner_box` CSS background-color (default: true).
+transparency-checkerboard = true
 # Configure the command to be called on copy, for example `wl-copy`
 copy-command = "wl-copy"
 # Increase or decrease the size of the annotations
@@ -284,13 +312,13 @@ primary-highlighter = "block"
 # Disable notifications
 disable-notifications = false
 # Actions to trigger on right click (order is important)
-# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
 actions-on-right-click = []
 # Actions to trigger on Enter key (order is important)
-# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
 actions-on-enter = ["save-to-clipboard"]
 # Actions to trigger on Escape key (order is important)
-# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
 actions-on-escape = ["exit"]
 # Action to perform when the Enter key is pressed [possible values: see `satty --help`]
 # Deprecated since 0.19.0: use actions-on-enter instead
@@ -337,6 +365,9 @@ notification-grace-period = 250
 "<Alt>Right" = "pan-right"
 "<Alt>Up" = "pan-up"
 "<Alt>Down" = "pan-down"
+# Browse images in the input file's folder: the mouse wheel does it with `scroll-image-navigation = true` under [general], or bind keys (unbound by default)
+# "Left" = "previous-image"
+# "Right" = "next-image"
 "Delete" = "delete-selection"
 "Escape" = "run-actions-on-escape"
 "Return" = "run-actions-on-enter"
@@ -371,7 +402,8 @@ notification-grace-period = 250
 "<Control>s" = "save-to-file"
 "<Shift><Control>s" = "save-to-file-as"
 "<Control>c" = "save-to-clipboard"
-"<Shift><Control>c" = "copy-filepath-to-clipboard"
+"<Shift><Control>c" = "copy-image-path-to-clipboard"
+"<Control><Alt>c" = "copy-filepath-to-clipboard"
 "<Control>v" = "paste-image"
 
 # bottom toolbar
@@ -479,11 +511,11 @@ Options:
       --auto-copy
           Automatically copy to clipboard after every annotation change (0.21.0)
       --actions-on-enter <ACTIONS_ON_ENTER>
-          Actions to perform when pressing Enter [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+          Actions to perform when pressing Enter [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
       --actions-on-escape <ACTIONS_ON_ESCAPE>
-          Actions to perform when pressing Escape [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+          Actions to perform when pressing Escape [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
       --actions-on-right-click <ACTIONS_ON_RIGHT_CLICK>
-          Actions to perform when hitting the copy Button [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+          Actions to perform when hitting the copy Button [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
   -d, --default-hide-toolbars
           Hide toolbars by default
       --focus-toggles-toolbars
@@ -521,7 +553,7 @@ Options:
       --right-click-copy
           Right click to copy, deprecated since 0.19.0 Preferably use the `action_on_right_click` option instead
       --action-on-enter <ACTION_ON_ENTER>
-          Action to perform when pressing Enter, deprecated since 0.19.0 Preferably use the `actions_on_enter` option instead [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+          Action to perform when pressing Enter, deprecated since 0.19.0 Preferably use the `actions_on_enter` option instead [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
   -h, --help
           Print help
   -V, --version
@@ -664,5 +696,3 @@ The source code is released under the MPL-2.0 license.
 
 The Font 'Roboto Regular' from Google is released under Apache-2.0 license.
 <!-- --8<-- [end:license] -->
-
-
