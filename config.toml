@@ -17,6 +17,9 @@ resize = { mode = "smart" }
 
 # try to have the window float (0.20.1). This may depend on the compositor.
 floating-hack = true
+
+# Plain mouse wheel browses supported images in the input file's directory.
+scroll-image-navigation = false
 # Hide toolbars by default
 default-hide-toolbars = false
 # Experimental (since 0.20.0): whether window focus shows/hides toolbars. This does not affect initial state of toolbars, see default-hide-toolbars.
@@ -211,6 +214,9 @@ fill = true
 "<Control>plus" = "zoom:1"
 "<Control>equal" = "zoom:1"
 "<Control>minus" = "zoom:-1"
+# Browse images in the input file's folder: the mouse wheel does it with `scroll-image-navigation = true` under [general], or bind keys (unbound by default)
+# "Left" = "previous-image"
+# "Right" = "next-image"
 "Delete" = "delete-selection"
 "<Alt>Page_Up" = "raise-selection"
 "<Alt>Page_Down" = "lower-selection"

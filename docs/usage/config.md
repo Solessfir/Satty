@@ -4,6 +4,10 @@ icon: lucide/monitor-cog
 
 --8<-- "README.md:config-search"
 
+The fork also supports `scroll-image-navigation` under `[general]`. It is configured in TOML.
+
+With wheel navigation enabled, wheel down opens the next supported image and wheel up opens the previous one in filename order. The `next-image` and `previous-image` keybind commands do the same from the keyboard, for example `"Right" = "next-image"` under `[keybinds]`; they are unbound by default. Navigation stops at the folder boundaries, preserves the current image on a load failure, and asks before discarding annotations. Ctrl+wheel still zooms, and touchpad scrolling still pans. Standard input and clipboard images keep normal scrolling.
+
 ## Styles
 
 --8<-- "README.md:styles"
