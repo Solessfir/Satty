@@ -27,6 +27,8 @@ pub enum ShortcutCommand {
     PanRight,
     PanUp,
     PanDown,
+    NextImage,
+    PreviousImage,
     Zoom(i16),
     DeleteSelection,
     RunConfiguredActions(ActionTrigger),
@@ -58,6 +60,8 @@ impl fmt::Display for ShortcutCommand {
             ShortcutCommand::PanRight => "pan-right",
             ShortcutCommand::PanUp => "pan-up",
             ShortcutCommand::PanDown => "pan-down",
+            ShortcutCommand::NextImage => "next-image",
+            ShortcutCommand::PreviousImage => "previous-image",
             ShortcutCommand::Zoom(factor) => {
                 write!(f, "zoom:{}", factor)?;
                 return Ok(());
@@ -123,6 +127,8 @@ impl FromStr for ShortcutCommand {
             "pan-right" => Ok(ShortcutCommand::PanRight),
             "pan-up" => Ok(ShortcutCommand::PanUp),
             "pan-down" => Ok(ShortcutCommand::PanDown),
+            "next-image" => Ok(ShortcutCommand::NextImage),
+            "previous-image" => Ok(ShortcutCommand::PreviousImage),
             text if text.starts_with("zoom:") => {
                 let num_str = text.strip_prefix("zoom:").unwrap();
                 if let Ok(num) = num_str.parse::<i16>() {
@@ -192,7 +198,11 @@ struct KeyBinding {
 impl KeyBinding {
     fn from_binding_str(key_binding: &str) -> Result<Self, String> {
         if let Some((key, modifiers)) = gtk::accelerator_parse(key_binding) {
-            if gtk::accelerator_valid(key, modifiers) {
+            // GTK reserves unmodified arrows, Home/End and similar keys for focus navigation, but Satty
+            // dispatches shortcuts itself, so any key that would be valid with a modifier is accepted.
+            if gtk::accelerator_valid(key, modifiers)
+                || (modifiers.is_empty() && gtk::accelerator_valid(key, ModifierType::CONTROL_MASK))
+            {
                 Ok(KeyBinding { modifiers, key })
             } else {
                 Err(format!(

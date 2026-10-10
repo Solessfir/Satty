@@ -2,7 +2,7 @@
 //! for formats the system has no gdk-pixbuf loader for (e.g. webp).
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use relm4::gtk::gdk_pixbuf::{Colorspace, Pixbuf, PixbufLoader};
@@ -11,6 +11,75 @@ use relm4::gtk::prelude::*;
 
 /// Mime types the fallback decoder supports on top of the gdk-pixbuf formats.
 pub const FALLBACK_MIME_TYPES: &[&str] = &["image/webp"];
+
+/// Sorted supported images in the directory containing `current`, as absolute paths.
+pub fn directory_images(current: &Path) -> Result<Vec<PathBuf>> {
+    let current = std::path::absolute(current)?;
+    let directory = current
+        .parent()
+        .ok_or(anyhow!("Image has no parent directory"))?;
+    let extensions: Vec<String> = Pixbuf::formats()
+        .iter()
+        .flat_map(|format| format.extensions())
+        .map(|extension| extension.to_string())
+        .chain(std::iter::once("webp".to_owned()))
+        .collect();
+    let mut files = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|extension| {
+                    extensions.iter().any(|e| e.eq_ignore_ascii_case(extension))
+                })
+        {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Pixbuf is not Send, so background decoding hands its pixels over in this form.
+#[derive(Debug)]
+pub struct DecodedImage {
+    bytes: Bytes,
+    has_alpha: bool,
+    width: i32,
+    height: i32,
+    rowstride: i32,
+}
+
+impl DecodedImage {
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let mut pixbuf = pixbuf_from_file(path)?;
+        // GL drivers expand RGB to RGBA on the CPU during upload, so pay that here off the UI thread
+        if !pixbuf.has_alpha() {
+            pixbuf = pixbuf.add_alpha(false, 0, 0, 0)?;
+        }
+        Ok(Self {
+            bytes: pixbuf.read_pixel_bytes(),
+            has_alpha: pixbuf.has_alpha(),
+            width: pixbuf.width(),
+            height: pixbuf.height(),
+            rowstride: pixbuf.rowstride(),
+        })
+    }
+
+    pub fn into_pixbuf(self) -> Pixbuf {
+        Pixbuf::from_bytes(
+            &self.bytes,
+            Colorspace::Rgb,
+            self.has_alpha,
+            8,
+            self.width,
+            self.height,
+            self.rowstride,
+        )
+    }
+}
 
 pub fn pixbuf_from_file(path: &Path) -> Result<Pixbuf> {
     let bytes = fs::read(path).with_context(|| format!("couldn't read file {}", path.display()))?;

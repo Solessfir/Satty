@@ -44,6 +44,8 @@ pub struct FemtoVGArea {
     sender: RefCell<Option<Sender<SketchBoardInput>>>,
     texture: RefCell<Option<gtk::gdk::GLTexture>>,
     surface_scale_handler: RefCell<Option<(gtk::gdk::Surface, glib::SignalHandlerId)>>,
+    // Deleted on the next render, where the GL context is already current.
+    stale_images: RefCell<Vec<femtovg::ImageId>>,
 }
 
 pub struct FemtoVgAreaMut {
@@ -189,6 +191,9 @@ impl GLAreaImpl for FemtoVGArea {
 
         let mut bc = self.canvas.borrow_mut();
         let canvas = bc.as_mut().unwrap(); // this unwrap is safe as long as we call "ensure_canvas" before
+        for id in self.stale_images.borrow_mut().drain(..) {
+            canvas.delete_image(id);
+        }
         let font = self.font.borrow().unwrap(); // this unwrap is safe as long as we call "ensure_canvas" before
         let mut actions = self.request_render.borrow_mut();
 
@@ -398,6 +403,39 @@ impl FemtoVGArea {
         }
     }
 
+    pub fn replace_background_image(&self, image: Pixbuf, active_tool: Rc<RefCell<dyn Tool>>) {
+        {
+            let mut inner = self.inner();
+            let inner = inner.as_mut().expect("Renderer must be initialized");
+            self.stale_images.borrow_mut().extend(
+                [
+                    inner.background_image_id_aliased.take(),
+                    inner.background_image_id_noaliasing.take(),
+                    inner.transparent_background_id.take(),
+                ]
+                .into_iter()
+                .flatten(),
+            );
+        }
+        let sender = self
+            .sender
+            .borrow()
+            .as_ref()
+            .expect("Renderer must be initialized")
+            .clone();
+        self.init(sender, active_tool, image);
+        self.request_render.borrow_mut().take();
+        self.post_render_refresh_selection.borrow_mut().take();
+        // refit to the new image without resize(), whose GL calls stall when made outside a render
+        if let Some(canvas) = self.canvas.borrow_mut().as_mut() {
+            self.inner()
+                .as_mut()
+                .expect("Renderer must be initialized")
+                .update_transformation(canvas);
+        }
+        self.obj().queue_render();
+    }
+
     fn build_text_context(&self) -> Result<(femtovg::TextContext, Vec<FontId>)> {
         let text_context = femtovg::TextContext::default();
         let mut loaded_fonts = Vec::new();
@@ -523,6 +561,13 @@ impl FemtoVGArea {
     pub fn request_render(&self, actions: &[Action]) {
         self.request_render.borrow_mut().replace(actions.into());
         self.obj().queue_render();
+    }
+
+    pub fn has_pending_actions(&self) -> bool {
+        self.request_render
+            .borrow()
+            .as_ref()
+            .is_some_and(|actions| !actions.is_empty())
     }
 
     pub fn schedule_refresh_selection_after_render(&self, index: usize) {
@@ -906,7 +951,17 @@ impl FemtoVgAreaMut {
         outside_bg_color: femtovg::Color,
         onscreen: bool,
     ) -> Result<()> {
-        let source_image = self.ensure_source_image();
+        // the full-image RGBA copy is only needed by blur, and building it would stall image switches
+        let needs_source_image = self
+            .drawables
+            .iter()
+            .any(|d| d.get_rendering_mode() == RenderingMode::Blur)
+            || self
+                .active_tool
+                .borrow()
+                .get_drawable()
+                .is_some_and(|d| d.get_rendering_mode() == RenderingMode::Blur);
+        let source_image = needs_source_image.then(|| self.ensure_source_image());
 
         // clear canvas
         canvas.clear_rect(0, 0, canvas.width(), canvas.height(), outside_bg_color);
@@ -930,8 +985,9 @@ impl FemtoVgAreaMut {
         for (i, d) in self.drawables.iter().enumerate() {
             if self.hidden_drawable_index != Some(i)
                 && d.get_rendering_mode() == RenderingMode::Blur
+                && let Some(source_image) = &source_image
             {
-                d.draw_baselayer(canvas, &source_image, font, bounds)?;
+                d.draw_baselayer(canvas, source_image, font, bounds)?;
             }
         }
 
@@ -939,8 +995,9 @@ impl FemtoVgAreaMut {
         if draw_active_tool
             && let Some(preview) = self.active_tool.borrow().get_drawable()
             && preview.get_rendering_mode() == RenderingMode::Blur
+            && let Some(source_image) = &source_image
         {
-            preview.draw_baselayer(canvas, &source_image, font, bounds)?;
+            preview.draw_baselayer(canvas, source_image, font, bounds)?;
             draw_active_tool = false;
         }
 
