@@ -84,6 +84,7 @@ impl fmt::Display for ShortcutCommand {
                 Action::SaveToFile => "save-to-file",
                 Action::SaveToFileAs => "save-to-file-as",
                 Action::CopyFilepathToClipboard => "copy-filepath-to-clipboard",
+                Action::CopyImagePathToClipboard => "copy-image-path-to-clipboard",
                 Action::Exit => "exit",
             },
             ShortcutCommand::PasteImage => "paste-image",
@@ -154,6 +155,9 @@ impl FromStr for ShortcutCommand {
             "save-to-clipboard" => Ok(ShortcutCommand::RunAction(Action::SaveToClipboard)),
             "copy-filepath-to-clipboard" => {
                 Ok(ShortcutCommand::RunAction(Action::CopyFilepathToClipboard))
+            }
+            "copy-image-path-to-clipboard" => {
+                Ok(ShortcutCommand::RunAction(Action::CopyImagePathToClipboard))
             }
             "exit" => Ok(ShortcutCommand::RunAction(Action::Exit)),
             "paste-image" => Ok(ShortcutCommand::PasteImage),
@@ -285,6 +289,10 @@ impl ShortcutRegistry {
         registry.add_key_binding("o", SC::SelectTool(Tools::Image));
         registry.add_key_binding("<Control>c", SC::RunAction(A::SaveToClipboard));
         registry.add_key_binding("<Control><Alt>c", SC::RunAction(A::CopyFilepathToClipboard));
+        registry.add_key_binding(
+            "<Shift><Control>c",
+            SC::RunAction(A::CopyImagePathToClipboard),
+        );
         registry.add_key_binding("<Control>s", SC::RunAction(A::SaveToFile));
         registry.add_key_binding("<Shift><Control>s", SC::RunAction(A::SaveToFileAs));
         registry.add_key_binding("<Control>v", SC::PasteImage);

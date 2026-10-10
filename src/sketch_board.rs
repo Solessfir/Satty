@@ -469,6 +469,12 @@ impl SketchBoard {
                 Action::CopyFilepathToClipboard => {
                     self.handle_copy_filepath();
                 }
+                Action::CopyImagePathToClipboard => {
+                    if let Some(ref pix_buf) = pix_buf {
+                        early_exit = self.handle_copy_image_path(pix_buf)
+                            && APP_CONFIG.read().early_exit_copy();
+                    }
+                }
                 Action::SaveToClipboard => {
                     if let Some(ref pix_buf) = pix_buf {
                         self.handle_copy_clipboard(pix_buf);
@@ -519,7 +525,10 @@ impl SketchBoard {
         let needs_pixbuf = actions.iter().any(|action| {
             matches!(
                 action,
-                Action::SaveToClipboard | Action::SaveToFile | Action::SaveToFileAs
+                Action::SaveToClipboard
+                    | Action::SaveToFile
+                    | Action::SaveToFileAs
+                    | Action::CopyImagePathToClipboard
             )
         });
 
@@ -886,6 +895,51 @@ impl SketchBoard {
                 false,
             ),
         }
+    }
+
+    fn temporary_image_snapshot(
+        image: &Pixbuf,
+        root: &Path,
+    ) -> anyhow::Result<(tempfile::TempDir, PathBuf)> {
+        let directory = tempfile::Builder::new()
+            .prefix("satty-copy.")
+            .tempdir_in(root)?;
+        let filename = chrono::Local::now()
+            .format("%Y%m%d-%H%M%S%3f.png")
+            .to_string();
+        let path = directory.path().join(filename);
+        let data = image.save_to_bufferv("png", &[])?;
+        fs::write(&path, data)?;
+        Ok((directory, path))
+    }
+
+    fn handle_copy_image_path(&self, image: &Pixbuf) -> bool {
+        let root = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(std::env::temp_dir);
+        let result = Self::temporary_image_snapshot(image, &root).and_then(|(directory, path)| {
+            let filepath = path
+                .to_str()
+                .ok_or_else(|| anyhow!("Temporary image path is not valid UTF-8"))?;
+            if let Some(command) = APP_CONFIG.read().copy_command() {
+                self.copy_text_to_external_process(filepath, command)?;
+            } else {
+                self.copy_text_to_clipboard(filepath)?;
+            }
+            // Clipboard consumers may open this file after Satty exits.
+            let _ = directory.keep();
+            log_result(
+                &format!("Edited image path copied to clipboard: {filepath}"),
+                true,
+            );
+            Ok(())
+        });
+        if let Err(error) = result {
+            log_result(&format!("Could not copy edited image path: {error}"), true);
+            return false;
+        }
+        true
     }
 
     fn handle_undo(&mut self) -> ToolUpdateResult {
@@ -1485,6 +1539,9 @@ impl SketchBoard {
             ShortcutCommand::Undo => self.handle_undo(),
             ShortcutCommand::Redo => self.handle_redo(),
             ShortcutCommand::ToggleToolbars => self.handle_toggle_toolbars_display(sender),
+            ShortcutCommand::RunAction(Action::CopyImagePathToClipboard) => {
+                self.handle_action(&[Action::CopyImagePathToClipboard])
+            }
             ShortcutCommand::RunAction(action) => {
                 self.renderer.request_render(&[action]);
                 ToolUpdateResult::Unmodified

@@ -273,6 +273,7 @@ pub enum Action {
     SaveToFile,
     SaveToFileAs,
     CopyFilepathToClipboard,
+    CopyImagePathToClipboard,
     Exit,
 }
 

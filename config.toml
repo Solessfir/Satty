@@ -53,13 +53,13 @@ primary-highlighter = "block"
 # Disable notifications
 disable-notifications = false
 # Actions to trigger on right click (order is important)
-# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
 actions-on-right-click = []
 # Actions to trigger on Enter key (order is important)
-# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
 actions-on-enter = ["save-to-clipboard"]
 # Actions to trigger on Escape key (order is important)
-# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, exit]
+# [possible values: save-to-clipboard, save-to-file, save-to-file-as, copy-filepath-to-clipboard, copy-image-path-to-clipboard, exit]
 actions-on-escape = ["exit"]
 # Action to perform when the Enter key is pressed [possible values: see `satty --help`]
 # Deprecated since 0.19.0: use actions-on-enter instead
@@ -140,7 +140,8 @@ notification-grace-period = 250
 "<Control>s" = "save-to-file"
 "<Shift><Control>s" = "save-to-file-as"
 "<Control>c" = "save-to-clipboard"
-"<Shift><Control>c" = "copy-filepath-to-clipboard"
+"<Shift><Control>c" = "copy-image-path-to-clipboard"
+"<Control><Alt>c" = "copy-filepath-to-clipboard"
 "<Control>v" = "paste-image"
 
 # bottom toolbar
