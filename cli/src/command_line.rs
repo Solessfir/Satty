@@ -275,6 +275,7 @@ pub enum Action {
     SaveToFile,
     SaveToFileAs,
     CopyFilepathToClipboard,
+    SaveTempAndCopyPath,
     Exit,
 }
 

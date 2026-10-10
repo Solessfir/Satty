@@ -245,6 +245,7 @@ pub enum Action {
     SaveToFile,
     SaveToFileAs,
     CopyFilepathToClipboard,
+    SaveTempAndCopyPath,
     Exit,
 }
 
@@ -255,6 +256,7 @@ impl From<CommandLineAction> for Action {
             CommandLineAction::SaveToFile => Self::SaveToFile,
             CommandLineAction::SaveToFileAs => Self::SaveToFileAs,
             CommandLineAction::CopyFilepathToClipboard => Self::CopyFilepathToClipboard,
+            CommandLineAction::SaveTempAndCopyPath => Self::SaveTempAndCopyPath,
             CommandLineAction::Exit => Self::Exit,
         }
     }

@@ -101,6 +101,7 @@ The search order for configuration files is:
 - <kbd>Ctrl+S</kbd>: Save to specified output file, creating missing folders in its path <sup>NEXTRELEASE</sup>
 - <kbd>Ctrl+Shift+S</kbd>: Save using file dialog <sup>0.20.0</sup>. The dialog uses `output-filename` as initial filename/path when available and remembers the last selected folder. <sup>0.21.0</sup>
 - <kbd>Ctrl+Alt+C</kbd>: Copy last saved filepath to clipboard <sup>0.20.1</sup>
+- <kbd>Ctrl+Shift+C</kbd>: Save the current edit to a temporary PNG and copy its path to clipboard <sup>NEXTRELEASE</sup>
 - <kbd>Ctrl+T</kbd>: Toggle toolbars
 - <kbd>Ctrl+Y</kbd>: Redo
 - <kbd>Ctrl+Z</kbd>: Undo
