@@ -815,14 +815,15 @@ impl Text {
             && let Some(handle) = &self.im_context
         {
             let transform = canvas.transform();
-            let widget_scale = handle.widget.scale_factor().max(1) as f32;
+            let widget_scale = femtovg_area::rendering_scale(&handle.widget);
+            let offset = femtovg_area::presentation_offset(&handle.widget);
             let (x1, y1) = transform.transform_point(cursor_x, cursor_top + extra_height);
             let (x2, y2) = transform.transform_point(
                 cursor_x + 1.0,
                 cursor_top + caret_height + extra_height + 1.0,
             );
-            let logical_x = (x1 / widget_scale).floor() as i32;
-            let logical_y = (y1 / widget_scale).floor() as i32;
+            let logical_x = (x1 / widget_scale + offset.x).floor() as i32;
+            let logical_y = (y1 / widget_scale + offset.y).floor() as i32;
             let logical_width = ((x2 - x1).abs() / widget_scale).ceil().max(1.0) as i32;
             let logical_height = ((y2 - y1).abs() / widget_scale).ceil().max(1.0) as i32;
             let rect = Rectangle::new(logical_x, logical_y, logical_width, logical_height.max(1));
