@@ -9,7 +9,7 @@ use femtovg::{
     renderer::OpenGl,
     rgb::{RGB, RGBA},
 };
-use gtk::glib;
+use gtk::{glib, prelude::*};
 use relm4::gtk::gdk_pixbuf::{Pixbuf, glib::subclass::types::ObjectSubclassIsExt};
 use relm4::{
     Sender,
@@ -25,6 +25,47 @@ use crate::{
 
 static FONT_STACK: OnceLock<Vec<FontId>> = OnceLock::new();
 
+pub fn rendering_scale(widget: &impl IsA<gtk::Widget>) -> f32 {
+    let surface = widget.native().and_then(|native| native.surface());
+    if let Some(surface) = surface
+        && surface.find_property("scale").is_some()
+    {
+        surface.property::<f64>("scale") as f32
+    } else {
+        widget.scale_factor() as f32
+    }
+}
+
+pub fn presentation_offset(widget: &impl IsA<gtk::Widget>) -> Vec2D {
+    let Some(native) = widget.native() else {
+        return Vec2D::zero();
+    };
+    let Some(native_widget) = native.dynamic_cast_ref::<gtk::Widget>() else {
+        return Vec2D::zero();
+    };
+    let Some(origin) = widget.compute_point(native_widget, &gtk::graphene::Point::new(0.0, 0.0))
+    else {
+        return Vec2D::zero();
+    };
+    let (x, y) = native.surface_transform();
+    let scale = rendering_scale(widget);
+    Vec2D::new(
+        pixel_alignment(origin.x(), x as f32, scale),
+        pixel_alignment(origin.y(), y as f32, scale),
+    )
+}
+
+fn framebuffer_size(width: i32, height: i32, scale: f32) -> (u32, u32) {
+    (
+        (width.max(0) as f32 * scale).ceil() as u32,
+        (height.max(0) as f32 * scale).ceil() as u32,
+    )
+}
+
+fn pixel_alignment(position: f32, surface_to_native: f32, scale: f32) -> f32 {
+    let position = position - surface_to_native;
+    (position * scale).round() / scale - position
+}
 pub fn set_font_stack(fonts: Vec<FontId>) {
     let _ = FONT_STACK.set(fonts);
 }
@@ -117,6 +158,10 @@ impl Default for FemtoVGArea {
 }
 
 impl FemtoVGArea {
+    fn presentation_offset(&self) -> Vec2D {
+        presentation_offset(self)
+    }
+
     pub fn set_active_tool(&mut self, active_tool: Rc<RefCell<dyn Tool>>) {
         self.imp()
             .inner()
@@ -167,7 +212,10 @@ impl FemtoVGArea {
             .inner()
             .as_mut()
             .expect("Did you call init before using FemtoVgArea?")
-            .abs_canvas_to_image_coordinates(input, self.scale_factor() as f32)
+            .abs_canvas_to_image_coordinates(
+                input - self.presentation_offset(),
+                rendering_scale(self),
+            )
     }
 
     pub fn rel_canvas_to_image_coordinates(&self, input: Vec2D) -> Vec2D {
@@ -175,7 +223,7 @@ impl FemtoVGArea {
             .inner()
             .as_mut()
             .expect("Did you call init before using FemtoVgArea?")
-            .rel_canvas_to_image_coordinates(input, self.scale_factor() as f32)
+            .rel_canvas_to_image_coordinates(input, rendering_scale(self))
     }
 
     pub fn init(
@@ -202,7 +250,7 @@ impl FemtoVGArea {
             .inner()
             .as_mut()
             .expect("Did you call init before using FemtoVgArea?")
-            .set_pointer_offset(offset * self.scale_factor() as f32);
+            .set_pointer_offset((offset - self.presentation_offset()) * rendering_scale(self));
     }
 
     pub fn set_pointer_offset_center(&self) {
@@ -218,7 +266,7 @@ impl FemtoVGArea {
             .inner()
             .as_mut()
             .expect("Did you call init before using FemtoVgArea?")
-            .set_drag_offset(offset * self.scale_factor() as f32);
+            .set_drag_offset(offset * rendering_scale(self));
         //trigger resize to recalculate offset
         self.imp().resize(0, 0);
     }

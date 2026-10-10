@@ -29,18 +29,21 @@ use crate::{
     tools::{Drawable, RenderingMode, Tool, Tools},
 };
 
-use super::{font_stack, set_font_stack};
+use super::{font_stack, framebuffer_size, rendering_scale, set_font_stack};
 
 const TRANSPARENCY_SQUARE_SIZE: usize = 64;
 
 #[derive(Default)]
 pub struct FemtoVGArea {
     canvas: RefCell<Option<femtovg::Canvas<femtovg::renderer::OpenGl>>>,
+    gl: RefCell<Option<Rc<glow::Context>>>,
     font: RefCell<Option<FontId>>,
     inner: RefCell<Option<FemtoVgAreaMut>>,
     request_render: RefCell<Option<Vec<Action>>>,
     post_render_refresh_selection: RefCell<Option<usize>>,
     sender: RefCell<Option<Sender<SketchBoardInput>>>,
+    texture: RefCell<Option<gtk::gdk::GLTexture>>,
+    surface_scale_handler: RefCell<Option<(gtk::gdk::Surface, glib::SignalHandlerId)>>,
 }
 
 pub struct FemtoVgAreaMut {
@@ -101,29 +104,77 @@ impl ObjectImpl for FemtoVGArea {
 impl WidgetImpl for FemtoVGArea {
     fn realize(&self) {
         self.parent_realize();
+        if let Some(surface) = self.obj().native().and_then(|native| native.surface())
+            && surface.find_property("scale").is_some()
+        {
+            let weak = self.obj().downgrade();
+            let handler = surface.connect_notify_local(Some("scale"), move |_, _| {
+                if let Some(area) = weak.upgrade() {
+                    area.queue_render();
+                }
+            });
+            self.surface_scale_handler.replace(Some((surface, handler)));
+        }
     }
     fn unrealize(&self) {
+        if let Some((surface, handler)) = self.surface_scale_handler.borrow_mut().take() {
+            surface.disconnect(handler);
+        }
         self.obj().make_current();
+        self.texture.borrow_mut().take();
         self.canvas.borrow_mut().take();
+        self.gl.borrow_mut().take();
         self.parent_unrealize();
+    }
+
+    fn snapshot(&self, snapshot: &gtk::Snapshot) {
+        // GLArea still owns the context, but its integer-scale texture must not reach GTK's scene.
+        let discarded = gtk::Snapshot::new();
+        self.parent_snapshot(&discarded);
+        let Some(texture) = self.texture.borrow().clone() else {
+            self.parent_snapshot(snapshot);
+            return;
+        };
+        let area = self.obj();
+        let scale = rendering_scale(&*area);
+        let offset = area.presentation_offset();
+        snapshot.push_clip(&gtk::graphene::Rect::new(
+            0.0,
+            0.0,
+            area.width() as f32,
+            area.height() as f32,
+        ));
+        snapshot.save();
+        snapshot.translate(&gtk::graphene::Point::new(
+            offset.x,
+            offset.y + texture.height() as f32 / scale,
+        ));
+        snapshot.scale(1.0, -1.0);
+        snapshot.append_texture(
+            &texture,
+            &gtk::graphene::Rect::new(
+                0.0,
+                0.0,
+                texture.width() as f32 / scale,
+                texture.height() as f32 / scale,
+            ),
+        );
+        snapshot.restore();
+        snapshot.pop();
     }
 }
 
 impl GLAreaImpl for FemtoVGArea {
-    fn resize(&self, width: i32, height: i32) {
+    fn resize(&self, _width: i32, _height: i32) {
         self.ensure_canvas();
 
         let mut bc = self.canvas.borrow_mut();
         let canvas = bc.as_mut().unwrap(); // this unwrap is safe as long as we call "ensure_canvas" before
 
-        let w = canvas.width();
-        let h = canvas.height();
-
-        canvas.set_size(
-            if width == 0 { w } else { width as u32 },
-            if height == 0 { h } else { height as u32 },
-            self.obj().scale_factor() as f32,
-        );
+        let area = self.obj();
+        let (width, height) =
+            framebuffer_size(area.width(), area.height(), rendering_scale(&*area));
+        canvas.set_size(width, height, 1.0);
 
         // update scale factor
         self.inner()
@@ -132,8 +183,9 @@ impl GLAreaImpl for FemtoVGArea {
             .update_transformation(canvas);
     }
 
-    fn render(&self, _context: &gtk::gdk::GLContext) -> glib::Propagation {
+    fn render(&self, context: &gtk::gdk::GLContext) -> glib::Propagation {
         self.ensure_canvas();
+        self.resize(0, 0);
 
         let mut bc = self.canvas.borrow_mut();
         let canvas = bc.as_mut().unwrap(); // this unwrap is safe as long as we call "ensure_canvas" before
@@ -170,13 +222,11 @@ impl GLAreaImpl for FemtoVGArea {
             // reset request
             *actions = None;
         }
-        if let Err(e) = self
-            .inner()
-            .as_mut()
-            .expect("Did you call init before using FemtoVgArea?")
-            .render_framebuffer(canvas, font)
-        {
-            eprintln!("Error rendering to framebuffer: {e}");
+        match self.render_texture(canvas, font, context) {
+            Ok(texture) => {
+                self.texture.replace(Some(texture));
+            }
+            Err(e) => eprintln!("Error rendering to framebuffer: {e}"),
         }
 
         if let Some(index) = self.post_render_refresh_selection.borrow_mut().take() {
@@ -191,6 +241,117 @@ impl GLAreaImpl for FemtoVGArea {
 }
 
 impl FemtoVGArea {
+    fn render_texture(
+        &self,
+        canvas: &mut Canvas<renderer::OpenGl>,
+        font: FontId,
+        context: &gtk::gdk::GLContext,
+    ) -> Result<gtk::gdk::GLTexture> {
+        let (width, height) = (canvas.width(), canvas.height());
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "Cannot render an empty framebuffer"
+        );
+
+        // Imported textures stay alive until GTK releases the immutable frame.
+        let gl = self.gl.borrow().as_ref().unwrap().clone();
+        let texture = unsafe {
+            let texture = gl.create_texture().map_err(anyhow::Error::msg)?;
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                width as i32,
+                height as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(None),
+            );
+            texture
+        };
+        let info = femtovg::ImageInfo::new(
+            ImageFlags::PREMULTIPLIED,
+            width as usize,
+            height as usize,
+            PixelFormat::Rgba8,
+        );
+        let image = match canvas.create_image_from_native_texture(texture, info) {
+            Ok(image) => image,
+            Err(error) => {
+                unsafe {
+                    gl.delete_texture(texture);
+                }
+                return Err(error.into());
+            }
+        };
+        canvas.set_render_target(femtovg::RenderTarget::Image(image));
+        let result = self
+            .inner()
+            .as_mut()
+            .expect("Did you call init before using FemtoVgArea?")
+            .render_framebuffer(canvas, font);
+        canvas.set_render_target(femtovg::RenderTarget::Screen);
+        canvas.flush();
+        canvas.delete_image(image);
+        if let Err(error) = result {
+            unsafe {
+                gl.delete_texture(texture);
+            }
+            return Err(error);
+        }
+
+        // The GTK 4.6 texture API has no fence, so finish before another context samples it.
+        unsafe {
+            gl.finish();
+        }
+        let retained_context = glib::thread_guard::ThreadGuard::new((context.clone(), gl));
+        let frame = unsafe {
+            gtk::gdk::GLTexture::with_release_func(
+                context,
+                texture.0.get(),
+                width as i32,
+                height as i32,
+                move || {
+                    glib::idle_add_once(move || {
+                        let (context, gl) = retained_context.into_inner();
+                        let previous = gtk::gdk::GLContext::current();
+                        context.make_current();
+                        gl.delete_texture(texture);
+                        if let Some(previous) = previous {
+                            previous.make_current();
+                        } else {
+                            gtk::gdk::GLContext::clear_current();
+                        }
+                    });
+                },
+            )
+        };
+        Ok(frame)
+    }
+
     pub fn init(
         &self,
         sender: Sender<SketchBoardInput>,
@@ -340,6 +501,7 @@ impl FemtoVGArea {
             let id = NonZeroU32::new(ctx.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING) as u32)
                 .expect("No GTK provided framebuffer binding");
             ctx.bind_framebuffer(glow::FRAMEBUFFER, None);
+            self.gl.replace(Some(Rc::new(ctx)));
             (renderer, glow::NativeFramebuffer(id))
         };
         renderer.set_screen_target(Some(fbo));
@@ -697,21 +859,21 @@ impl FemtoVgAreaMut {
         canvas.reset_transform();
         canvas.set_transform(&transform);
 
-        self.render(
-            canvas,
-            font,
-            femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
-            false,
-        )?;
-
-        // return screenshot
-        let result = canvas.screenshot();
+        let result = self
+            .render(
+                canvas,
+                font,
+                femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
+                false,
+            )
+            .and_then(|()| canvas.screenshot().map_err(Into::into));
 
         // clean up
         canvas.set_render_target(femtovg::RenderTarget::Screen);
+        canvas.flush();
         canvas.delete_image(image_id);
 
-        Ok(result?)
+        result
     }
 
     pub fn render_framebuffer(
@@ -719,8 +881,6 @@ impl FemtoVgAreaMut {
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         font: FontId,
     ) -> Result<()> {
-        canvas.set_render_target(femtovg::RenderTarget::Screen);
-
         // setup transform to image coordinates
         let mut transform = Transform2D::identity();
         transform.scale(self.scale_factor, self.scale_factor);
@@ -1019,6 +1179,10 @@ impl FemtoVgAreaMut {
         } else {
             // dragged
             self.offset = center_offset + self.drag_offset;
+        }
+        if (self.scale_factor - 1.0).abs() <= f32::EPSILON {
+            self.offset.x = self.offset.x.round();
+            self.offset.y = self.offset.y.round();
         }
     }
 
