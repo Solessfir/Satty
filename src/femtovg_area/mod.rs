@@ -4,10 +4,8 @@ use std::{cell::RefCell, rc::Rc, sync::OnceLock};
 
 use anyhow::Result;
 use femtovg::{
-    Canvas, FontId, ImageFlags, ImageId, ImageSource, PixelFormat,
-    imgref::Img,
-    renderer::OpenGl,
-    rgb::{RGB, RGBA},
+    Canvas, FontId, ImageFlags, ImageId, ImageSource, PixelFormat, imgref::ImgRef,
+    renderer::OpenGl, rgb::FromSlice,
 };
 use gtk::{glib, prelude::*};
 use relm4::gtk::gdk_pixbuf::{Pixbuf, glib::subclass::types::ObjectSubclassIsExt};
@@ -102,43 +100,32 @@ pub fn create_image_from_pixbuf(
         let src_buffer = image.pixels();
 
         let row_length = width * bytes_per_pixel;
-        let mut dst_buffer = if row_length == stride {
-            // stride == row_length, there are no additional bytes after the end of each row
-            src_buffer.to_vec()
-        } else {
-            // stride != row_length, there are additional bytes after the end of each row that
-            // need to be truncated. We copy row by row..
-            let mut dst_buffer = Vec::<u8>::with_capacity(width * height * bytes_per_pixel);
-
-            for row in 0..height {
-                let src_offset = row * stride;
-                dst_buffer.extend_from_slice(&src_buffer[src_offset..src_offset + row_length]);
+        if row_length == stride {
+            // tightly packed rows upload straight from the pixbuf without copying
+            let pixels = &src_buffer[..row_length * height];
+            if image.has_alpha() {
+                let img = ImgRef::new(pixels.as_rgba(), width, height);
+                canvas.update_image(image_id, ImageSource::Rgba(img), 0, 0)?;
+            } else {
+                let img = ImgRef::new(pixels.as_rgb(), width, height);
+                canvas.update_image(image_id, ImageSource::Rgb(img), 0, 0)?;
             }
-            dst_buffer
-        };
+            return Ok(image_id);
+        }
 
-        // in almost all cases, that should be a no-op. Buf we might have additional elements after the
-        // end of the buffer, e.g. after width * height * bytes_per_pixel
-        dst_buffer.truncate(width * height * bytes_per_pixel);
+        // there are additional bytes after the end of each row that need to be truncated
+        let mut dst_buffer = Vec::<u8>::with_capacity(width * height * bytes_per_pixel);
+        for row in 0..height {
+            let src_offset = row * stride;
+            dst_buffer.extend_from_slice(&src_buffer[src_offset..src_offset + row_length]);
+        }
 
         if image.has_alpha() {
-            let img = Img::new_stride(
-                dst_buffer.align_to::<RGBA<u8>>().1.to_vec(),
-                width,
-                height,
-                width,
-            );
-
-            canvas.update_image(image_id, ImageSource::Rgba(img.as_ref()), 0, 0)?;
+            let img = ImgRef::new(dst_buffer.as_rgba(), width, height);
+            canvas.update_image(image_id, ImageSource::Rgba(img), 0, 0)?;
         } else {
-            let img = Img::new_stride(
-                dst_buffer.align_to::<RGB<u8>>().1.to_owned(),
-                width,
-                height,
-                width,
-            );
-
-            canvas.update_image(image_id, ImageSource::Rgb(img.as_ref()), 0, 0)?;
+            let img = ImgRef::new(dst_buffer.as_rgb(), width, height);
+            canvas.update_image(image_id, ImageSource::Rgb(img), 0, 0)?;
         }
     }
 
@@ -195,6 +182,10 @@ impl FemtoVGArea {
         self.imp().request_render(actions);
     }
 
+    pub fn has_pending_actions(&self) -> bool {
+        self.imp().has_pending_actions()
+    }
+
     pub fn schedule_refresh_selection_after_render(&self, index: usize) {
         self.imp().schedule_refresh_selection_after_render(index);
     }
@@ -243,6 +234,10 @@ impl FemtoVGArea {
             .set_zoom_scale(factor, false);
         //trigger resize to recalculate zoom
         self.imp().resize(0, 0);
+    }
+
+    pub fn replace_background_image(&self, image: Pixbuf, active_tool: Rc<RefCell<dyn Tool>>) {
+        self.imp().replace_background_image(image, active_tool);
     }
 
     pub fn set_pointer_offset(&self, offset: Vec2D) {

@@ -28,6 +28,8 @@ corner-roundness = 12
 initial-tool = "brush"
 # One-based palette color to select on startup (default: 1).
 initial-color = 1
+# Plain mouse wheel browses supported images in the input file's directory (default: false).
+scroll-image-navigation = false
 # Copy after a successful Save or Save As: none, image, or file-path (default: none).
 copy-on-save = "none"
 # Configure the command to be called on copy, for example `wl-copy`
@@ -106,6 +108,9 @@ notification-grace-period = 250
 "<Alt>Right" = "pan-right"
 "<Alt>Up" = "pan-up"
 "<Alt>Down" = "pan-down"
+# Browse images in the input file's folder: the mouse wheel does it with `scroll-image-navigation = true` under [general], or bind keys (unbound by default)
+# "Left" = "previous-image"
+# "Right" = "next-image"
 "Delete" = "delete-selection"
 "Escape" = "run-actions-on-escape"
 "Return" = "run-actions-on-enter"

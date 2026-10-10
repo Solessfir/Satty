@@ -5,6 +5,7 @@ use femtovg::rgb::{ComponentBytes, RGBA};
 use relm4::gtk::gdk_pixbuf::Pixbuf;
 use relm4::gtk::gdk_pixbuf::glib::Bytes;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::io::Write;
 use std::panic;
 use std::path::{Path, PathBuf};
@@ -57,6 +58,8 @@ pub enum SketchBoardInput {
     Refresh,
     Exit,
     ScaleFactorChanged,
+    DiscardAndNavigate(bool),
+    CancelNavigation,
     ShapeDimensionsUpdate(Vec2D),
     Output(SketchBoardOutput),
 }
@@ -322,7 +325,7 @@ fn pixbuf_from_file_list(file_list: &gdk::FileList) -> Option<Pixbuf> {
 pub struct SketchBoard {
     renderer: FemtoVGArea,
     // Mirrors the bounds render_native_resolution derives from the background
-    // image, which is set once at init and never replaced.
+    // image; navigation replaces it along with the renderer background.
     // (pos, size)
     image_bounds: (Vec2D, Vec2D),
     ime_enabled: Rc<Cell<bool>>,
@@ -341,9 +344,161 @@ pub struct SketchBoard {
     last_saved_filepath: RefCell<Option<String>>,
     // last pointer position in canvas coordinates, used to paste at the cursor
     last_pointer_pos: Option<Vec2D>,
+    current_image_path: Option<PathBuf>,
+    navigation_pending: bool,
+    navigation_scroll_accumulator: f32,
+    // Directory listing scanned once per navigation session, rescanned when the current image goes missing from it.
+    navigation_files: Vec<PathBuf>,
+    // Image the wheel is heading to; shown as soon as its decode lands in the cache.
+    navigation_target: Option<PathBuf>,
+    // None while the image is still decoding
+    image_cache: HashMap<PathBuf, Option<Pixbuf>>,
 }
 
+// Decoded images kept on each side of the shown one, about 33 MB each at 4K.
+const PREFETCH_RADIUS: usize = 2;
+
 impl SketchBoard {
+    fn navigate_image(&mut self, next: bool, sender: ComponentSender<Self>) {
+        if self.current_image_path.is_none()
+            || self.navigation_pending
+            || self.renderer.has_pending_actions()
+        {
+            return;
+        }
+        if self.renderer.last_drawable_index().is_some() || self.active_tool.borrow().active() {
+            self.confirm_discard(next, sender);
+            return;
+        }
+        let Some(index) = self.navigation_index() else {
+            return;
+        };
+        let index = if next {
+            index.checked_add(1)
+        } else {
+            index.checked_sub(1)
+        };
+        let Some(path) = index.and_then(|index| self.navigation_files.get(index)) else {
+            return;
+        };
+        self.navigation_target = Some(path.clone());
+        self.show_navigation_target(&sender);
+        self.prefetch_images(&sender);
+    }
+
+    fn confirm_discard(&mut self, next: bool, sender: ComponentSender<Self>) {
+        self.navigation_pending = true;
+        let dialog = gtk::MessageDialog::builder()
+            .modal(true)
+            .text("Switch images and discard annotations?")
+            .secondary_text("Save first if you want to keep the annotated image.")
+            .build();
+        if let Some(window) = self.renderer.toplevel_window() {
+            dialog.set_transient_for(Some(&window));
+        }
+        dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+        dialog.add_button("Discard annotations", gtk::ResponseType::Accept);
+        dialog.set_default_response(gtk::ResponseType::Cancel);
+        dialog.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                sender.input(SketchBoardInput::DiscardAndNavigate(next));
+            } else {
+                sender.input(SketchBoardInput::CancelNavigation);
+            }
+            dialog.close();
+        });
+        dialog.present();
+    }
+
+    /// Index of the image navigation continues from: the pending target, else the shown one.
+    fn navigation_index(&mut self) -> Option<usize> {
+        let base = self
+            .navigation_target
+            .clone()
+            .or_else(|| self.current_image_path.clone())?;
+        if !self.navigation_files.contains(&base) {
+            match image_loading::directory_images(&base) {
+                Ok(files) => self.navigation_files = files,
+                Err(error) => {
+                    log_result(&format!("Could not list adjacent images: {error}"), true);
+                    return None;
+                }
+            }
+        }
+        self.navigation_files.iter().position(|path| path == &base)
+    }
+
+    fn prefetch_images(&mut self, sender: &ComponentSender<Self>) {
+        let Some(center) = self.navigation_index() else {
+            return;
+        };
+        let first = center.saturating_sub(PREFETCH_RADIUS);
+        let last = (center + PREFETCH_RADIUS).min(self.navigation_files.len() - 1);
+        let wanted = &self.navigation_files[first..=last];
+        self.image_cache.retain(|path, _| wanted.contains(path));
+        // nearest first so the next image wins the thread pool
+        let mut queue: Vec<(usize, PathBuf)> = (first..=last)
+            .map(|index| (index, self.navigation_files[index].clone()))
+            .collect();
+        queue.sort_by_key(|(index, _)| index.abs_diff(center));
+        for (_, path) in queue {
+            if self.image_cache.contains_key(&path) {
+                continue;
+            }
+            self.image_cache.insert(path.clone(), None);
+            sender.spawn_oneshot_command(move || {
+                let image = image_loading::DecodedImage::from_file(&path);
+                (path, image)
+            });
+        }
+    }
+
+    fn show_navigation_target(&mut self, sender: &ComponentSender<Self>) {
+        let Some(path) = self.navigation_target.clone() else {
+            return;
+        };
+        if self.current_image_path.as_ref() == Some(&path) {
+            self.navigation_target = None;
+            return;
+        }
+        if let Some(Some(image)) = self.image_cache.get(&path).cloned() {
+            self.navigation_target = None;
+            self.replace_image(path, image, sender);
+        }
+    }
+
+    fn replace_image(&mut self, path: PathBuf, image: Pixbuf, sender: &ComponentSender<Self>) {
+        self.active_tool.borrow_mut().handle_deactivated();
+        self.tools = ToolsManager::new();
+        self.pointer_tool = self.tools.get_pointer_tool();
+        self.text_tool = self.tools.get_text_tool();
+        let tool = APP_CONFIG.read().initial_tool();
+        self.active_tool = self.tools.get(&tool);
+        self.active_tool
+            .borrow_mut()
+            .handle_event(ToolEvent::StyleChanged(self.style));
+        self.active_tool.borrow_mut().handle_activated();
+        self.image_bounds = (
+            Vec2D::zero(),
+            Vec2D::new(image.width() as f32, image.height() as f32),
+        );
+        self.renderer
+            .replace_background_image(image.clone(), self.active_tool.clone());
+        self.current_image_path = Some(path);
+        self.navigation_pending = false;
+        self.last_saved_filepath.borrow_mut().take();
+        self.last_pointer_pos = None;
+        self.pointer_layer_scroll_accumulator = 0.0;
+        self.temporary_pointer_previous_tool = None;
+        self.return_to_pointer_after_text_commit = false;
+        self.im_context.reset();
+        sender
+            .output_sender()
+            .emit(SketchBoardOutput::ToolSwitchShortcut(tool));
+        sender
+            .output_sender()
+            .emit(SketchBoardOutput::DimensionsUpdate(self.image_bounds.1));
+    }
     fn sync_toolbar_style_from_drawable(
         &mut self,
         drawable: &dyn crate::tools::Drawable,
@@ -1568,6 +1723,10 @@ impl SketchBoard {
                 self.renderer.request_render(&[]);
                 ToolUpdateResult::Unmodified
             }
+            ShortcutCommand::NextImage | ShortcutCommand::PreviousImage => {
+                self.navigate_image(command == ShortcutCommand::NextImage, sender);
+                ToolUpdateResult::Unmodified
+            }
             ShortcutCommand::Zoom(step_count) => {
                 if step_count != 0 {
                     let zoom_factor = APP_CONFIG.read().zoom_factor();
@@ -1672,7 +1831,7 @@ impl SketchBoard {
 
 #[relm4::component(pub)]
 impl Component for SketchBoard {
-    type CommandOutput = ();
+    type CommandOutput = (PathBuf, anyhow::Result<image_loading::DecodedImage>);
     type Input = SketchBoardInput;
     type Output = SketchBoardOutput;
     type Init = Pixbuf;
@@ -1831,7 +1990,57 @@ impl Component for SketchBoard {
         },
     }
 
+    fn update_cmd(
+        &mut self,
+        (path, image): Self::CommandOutput,
+        sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
+        match image {
+            Ok(image) => {
+                // the entry is gone if the image left the prefetch window while decoding
+                let Some(slot) = self.image_cache.get_mut(&path) else {
+                    return;
+                };
+                *slot = Some(image.into_pixbuf());
+                self.show_navigation_target(&sender);
+            }
+            Err(error) => {
+                self.image_cache.remove(&path);
+                if self.navigation_target.as_ref() == Some(&path) {
+                    self.navigation_target = None;
+                }
+                log_result(&format!("Could not open adjacent image: {error}"), true);
+            }
+        }
+    }
+
     fn update(&mut self, msg: SketchBoardInput, sender: ComponentSender<Self>, _root: &Self::Root) {
+        if let SketchBoardInput::InputEvent(InputEvent::Mouse(ref event)) = msg
+            && event.type_ == MouseEventType::Scroll
+            && !event.is_touchpad
+            && event
+                .modifier
+                .intersection(
+                    ModifierType::CONTROL_MASK
+                        | ModifierType::SHIFT_MASK
+                        | ModifierType::ALT_MASK
+                        | ModifierType::SUPER_MASK,
+                )
+                .is_empty()
+            && event.screen_pos.y != 0.0
+            && APP_CONFIG.read().scroll_image_navigation()
+            && self.current_image_path.is_some()
+        {
+            // high-resolution wheels split one notch into fractional deltas
+            self.navigation_scroll_accumulator += event.screen_pos.y;
+            if self.navigation_scroll_accumulator.abs() >= 1.0 {
+                let next = self.navigation_scroll_accumulator > 0.0;
+                self.navigation_scroll_accumulator = 0.0;
+                self.navigate_image(next, sender);
+            }
+            return;
+        }
         let ime_should_be_enabled =
             self.active_tool_type() == Tools::Text && self.active_tool.borrow().input_enabled();
 
@@ -2015,6 +2224,16 @@ impl Component for SketchBoard {
                 self.renderer.resize(0, 0);
                 ToolUpdateResult::Redraw
             }
+            SketchBoardInput::DiscardAndNavigate(next) => {
+                self.navigation_pending = false;
+                let result = self.handle_clear_all();
+                self.navigate_image(next, sender.clone());
+                result
+            }
+            SketchBoardInput::CancelNavigation => {
+                self.navigation_pending = false;
+                ToolUpdateResult::Unmodified
+            }
             SketchBoardInput::ShapeDimensionsUpdate(size) => {
                 self.emit_shape_dimensions(&sender, size);
                 ToolUpdateResult::Unmodified
@@ -2148,7 +2367,21 @@ impl Component for SketchBoard {
             im_context,
             last_saved_filepath: RefCell::new(None),
             last_pointer_pos: None,
+            current_image_path: match config.input() {
+                Some(crate::configuration::Input::File(path)) if path != "-" => {
+                    std::path::absolute(path).ok()
+                }
+                _ => None,
+            },
+            navigation_pending: false,
+            navigation_scroll_accumulator: 0.0,
+            navigation_files: Vec::new(),
+            navigation_target: None,
+            image_cache: HashMap::new(),
         };
+        if let Some(path) = &model.current_image_path {
+            model.image_cache.insert(path.clone(), Some(image.clone()));
+        }
 
         let area = &mut model.renderer;
         area.init(
@@ -2158,6 +2391,18 @@ impl Component for SketchBoard {
         );
 
         let widgets = view_output!();
+
+        let navigation_keys_bound = [ShortcutCommand::NextImage, ShortcutCommand::PreviousImage]
+            .into_iter()
+            .any(|command| {
+                model
+                    .shortcut_registry
+                    .get_binding_for_command(command)
+                    .is_some()
+            });
+        if config.scroll_image_navigation() || navigation_keys_bound {
+            model.prefetch_images(&sender);
+        }
 
         model.im_context.set_client_widget(Some(&model.renderer));
         model.im_context.set_use_preedit(true);

@@ -4,7 +4,9 @@ icon: lucide/monitor-cog
 
 This is an example config. Please note, we're not pointing out defaults everywhere yet, it is a WIP.
 
-The fork also supports `initial-color` (one-based palette number) and `copy-on-save` (`none`, `image` or `file-path`) under `[general]`. Invalid palette numbers fall back to the first color. These options are configured in TOML.
+The fork also supports `initial-color` (one-based palette number), `scroll-image-navigation` and `copy-on-save` (`none`, `image` or `file-path`) under `[general]`. Invalid palette numbers fall back to the first color. These options are configured in TOML.
+
+With wheel navigation enabled, wheel down opens the next supported image and wheel up opens the previous one in filename order. The `next-image` and `previous-image` keybind commands do the same from the keyboard, for example `"Right" = "next-image"` under `[keybinds]`; they are unbound by default. Navigation stops at the folder boundaries, preserves the current image on a load failure, and asks before discarding annotations. Ctrl+wheel still zooms, and touchpad scrolling still pans. Standard input and clipboard images keep normal scrolling.
 
 Saving creates missing output directories and copies the successfully saved result before any configured early exit. Cancelled or failed saves skip `copy-on-save`. `copy-on-save = "file-path"` copies the resolved saved path, while `image` copies the edited PNG. This also applies to Save As.
 

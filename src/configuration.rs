@@ -93,6 +93,7 @@ pub struct Configuration {
     keybinds: HashMap<String, String>, // key_binding -> tool_or_command
     zoom_factor: f32,
     pan_step_size: f32,
+    scroll_image_navigation: bool,
     text_move_length: f32,
     input_scale: Option<f32>,
     title: Option<String>,
@@ -326,6 +327,9 @@ impl Configuration {
         }
         if let Some(v) = general.copy_on_save {
             self.copy_on_save = v;
+        }
+        if let Some(v) = general.scroll_image_navigation {
+            self.scroll_image_navigation = v;
         }
         if let Some(v) = general.copy_command {
             self.copy_command = Some(v);
@@ -616,6 +620,10 @@ impl Configuration {
         self.copy_on_save
     }
 
+    pub fn scroll_image_navigation(&self) -> bool {
+        self.scroll_image_navigation
+    }
+
     pub fn copy_command(&self) -> Option<&String> {
         self.copy_command.as_ref()
     }
@@ -798,6 +806,7 @@ impl Default for Configuration {
             keybinds: HashMap::new(),
             zoom_factor: 1.1,
             pan_step_size: 50.,
+            scroll_image_navigation: false,
             text_move_length: 50.0,
             input_scale: None,
             title: None,
@@ -858,6 +867,7 @@ struct ConfigurationFileGeneral {
     initial_color: Option<usize>,
     copy_command: Option<String>,
     copy_on_save: Option<CopyOnSave>,
+    scroll_image_navigation: Option<bool>,
     annotation_size_factor: Option<f32>,
     save_after_copy: Option<bool>,
     auto_copy: Option<bool>,
