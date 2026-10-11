@@ -20,6 +20,8 @@ floating-hack = true
 
 # Plain mouse wheel browses supported images in the input file's directory.
 scroll-image-navigation = false
+# Draw a checkerboard behind transparent pixels; when off they show the `.inner_box` CSS background-color (default: true).
+transparency-checkerboard = true
 # Hide toolbars by default
 default-hide-toolbars = false
 # Experimental (since 0.20.0): whether window focus shows/hides toolbars. This does not affect initial state of toolbars, see default-hide-toolbars.
