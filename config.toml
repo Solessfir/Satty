@@ -28,6 +28,8 @@ corner-roundness = 12
 initial-tool = "brush"
 # Plain mouse wheel browses supported images in the input file's directory (default: false).
 scroll-image-navigation = false
+# Draw a checkerboard behind transparent pixels; when off they show the `.inner_box` CSS background-color (default: true).
+transparency-checkerboard = true
 # Configure the command to be called on copy, for example `wl-copy`
 copy-command = "wl-copy"
 # Increase or decrease the size of the annotations

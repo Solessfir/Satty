@@ -92,6 +92,7 @@ pub struct Configuration {
     zoom_factor: f32,
     pan_step_size: f32,
     scroll_image_navigation: bool,
+    transparency_checkerboard: bool,
     text_move_length: f32,
     input_scale: Option<f32>,
     title: Option<String>,
@@ -313,6 +314,9 @@ impl Configuration {
         }
         if let Some(v) = general.scroll_image_navigation {
             self.scroll_image_navigation = v;
+        }
+        if let Some(v) = general.transparency_checkerboard {
+            self.transparency_checkerboard = v;
         }
         if let Some(v) = general.copy_command {
             self.copy_command = Some(v);
@@ -596,6 +600,10 @@ impl Configuration {
         self.scroll_image_navigation
     }
 
+    pub fn transparency_checkerboard(&self) -> bool {
+        self.transparency_checkerboard
+    }
+
     pub fn copy_command(&self) -> Option<&String> {
         self.copy_command.as_ref()
     }
@@ -777,6 +785,7 @@ impl Default for Configuration {
             zoom_factor: 1.1,
             pan_step_size: 50.,
             scroll_image_navigation: false,
+            transparency_checkerboard: true,
             text_move_length: 50.0,
             input_scale: None,
             title: None,
@@ -836,6 +845,7 @@ struct ConfigurationFileGeneral {
     initial_tool: Option<Tools>,
     copy_command: Option<String>,
     scroll_image_navigation: Option<bool>,
+    transparency_checkerboard: Option<bool>,
     annotation_size_factor: Option<f32>,
     save_after_copy: Option<bool>,
     auto_copy: Option<bool>,

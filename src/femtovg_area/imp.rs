@@ -1097,17 +1097,16 @@ impl FemtoVgAreaMut {
             }
         };
 
-        let transparency_bg_id = match self.transparent_background_id {
-            Some(id) if onscreen => Some(id),
-            None => {
-                if let Some(id) = Self::create_transparency_bg(canvas) {
-                    self.transparent_background_id.replace(id);
-                    Some(id)
-                } else {
-                    None
+        let transparency_bg_id = if onscreen && APP_CONFIG.read().transparency_checkerboard() {
+            match self.transparent_background_id {
+                Some(id) => Some(id),
+                None => {
+                    self.transparent_background_id = Self::create_transparency_bg(canvas);
+                    self.transparent_background_id
                 }
             }
-            _ => None,
+        } else {
+            None
         };
 
         // render the image
