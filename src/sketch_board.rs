@@ -529,7 +529,11 @@ impl SketchBoard {
             match image_loading::directory_images(&base) {
                 Ok(files) => self.navigation_files = files,
                 Err(error) => {
-                    log_result(&format!("Could not list adjacent images: {error}"), true);
+                    log_with_severity(
+                        &format!("Could not list adjacent images: {error}"),
+                        LogLevel::Error,
+                        LogSeverity::High,
+                    );
                     return None;
                 }
             }
@@ -583,6 +587,7 @@ impl SketchBoard {
         self.text_tool = self.tools.get_text_tool();
         let tool = APP_CONFIG.read().initial_tool();
         self.active_tool = self.tools.get(&tool);
+        self.style = self.effective_style(tool);
         self.active_tool
             .borrow_mut()
             .handle_event(ToolEvent::StyleChanged(self.style));
@@ -601,6 +606,8 @@ impl SketchBoard {
         self.temporary_pointer_previous_tool = None;
         self.return_to_pointer_after_text_commit = false;
         self.im_context.reset();
+        self.emit_style_to_toolbar(sender);
+        self.emit_style_scope(sender);
         sender
             .output_sender()
             .emit(SketchBoardOutput::ToolSwitchShortcut(tool));
@@ -1222,14 +1229,18 @@ impl SketchBoard {
             }
             // Clipboard consumers may open this file after Satty exits.
             let _ = directory.keep();
-            log_result(
+            log(
                 &format!("Edited image path copied to clipboard: {filepath}"),
-                true,
+                LogLevel::Info,
             );
             Ok(())
         });
         if let Err(error) = result {
-            log_result(&format!("Could not copy edited image path: {error}"), true);
+            log_with_severity(
+                &format!("Could not copy edited image path: {error}"),
+                LogLevel::Error,
+                LogSeverity::High,
+            );
             return false;
         }
         true
@@ -2169,7 +2180,11 @@ impl Component for SketchBoard {
                 if self.navigation_target.as_ref() == Some(&path) {
                     self.navigation_target = None;
                 }
-                log_result(&format!("Could not open adjacent image: {error}"), true);
+                log_with_severity(
+                    &format!("Could not open adjacent image: {error}"),
+                    LogLevel::Error,
+                    LogSeverity::High,
+                );
             }
         }
     }
@@ -2387,7 +2402,7 @@ impl Component for SketchBoard {
             }
             SketchBoardInput::DiscardAndNavigate(next) => {
                 self.navigation_pending = false;
-                let result = self.handle_clear_all();
+                let result = self.handle_clear_all(&sender);
                 self.navigate_image(next, sender.clone());
                 result
             }

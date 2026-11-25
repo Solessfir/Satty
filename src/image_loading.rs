@@ -43,8 +43,93 @@ pub fn directory_images(current: &Path) -> Result<Vec<PathBuf>> {
             files.push(path);
         }
     }
-    files.sort();
+    sort_as_launched(&mut files);
     Ok(files)
+}
+
+/// Orders `files` as the file manager that opened the image shows its folder: FILEY_SORT is "name", "type", "modified" or "size", with
+/// ",desc" after it the other way round, as Filey passes it; by name without it. Ties go by name.
+fn sort_as_launched(files: &mut [PathBuf]) {
+    let order = std::env::var("FILEY_SORT").unwrap_or_default();
+    let (key, descending) = order.split_once(',').map_or((order.as_str(), false), |(key, way)| (key, way == "desc"));
+    let name = |path: &PathBuf| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let extension = |path: &PathBuf| path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let metadata = |path: &PathBuf| fs::metadata(path).ok();
+    let mut keyed: Vec<(PathBuf, String, String, u64, std::time::SystemTime)> = files
+        .iter()
+        .map(|path| {
+            let meta = metadata(path);
+            let size = meta.as_ref().map_or(0, |m| m.len());
+            let modified = meta.and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH);
+            (path.clone(), name(path), extension(path), size, modified)
+        })
+        .collect();
+    keyed.sort_by(|a, b| {
+        let by = match key {
+            "type" => a.2.cmp(&b.2),
+            "modified" => a.4.cmp(&b.4),
+            "size" => a.3.cmp(&b.3),
+            _ => std::cmp::Ordering::Equal,
+        };
+        let by = if descending { by.reverse() } else { by };
+        let names = natural_order(&a.1, &b.1);
+        by.then(if descending && key != "type" && key != "modified" && key != "size" { names.reverse() } else { names })
+    });
+    for (slot, (path, ..)) in files.iter_mut().zip(keyed) {
+        *slot = path;
+    }
+}
+
+/// Names as Filey orders them: ASCII letters without regard to case, and runs of digits by their value.
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if a[i].is_ascii_digit() && b[j].is_ascii_digit() {
+            let (mut ie, mut je) = (i, j);
+            while ie < a.len() && a[ie].is_ascii_digit() {
+                ie += 1;
+            }
+            while je < b.len() && b[je].is_ascii_digit() {
+                je += 1;
+            }
+            let (mut iz, mut jz) = (i, j);
+            while iz < ie && a[iz] == b'0' {
+                iz += 1;
+            }
+            while jz < je && b[jz] == b'0' {
+                jz += 1;
+            }
+            let by = (ie - iz).cmp(&(je - jz)).then_with(|| a[iz..ie].cmp(&b[jz..je]));
+            if by != Ordering::Equal {
+                return by;
+            }
+            i = ie;
+            j = je;
+        } else {
+            let by = a[i].to_ascii_lowercase().cmp(&b[j].to_ascii_lowercase());
+            if by != Ordering::Equal {
+                return by;
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    (a.len() - i).cmp(&(b.len() - j)).then_with(|| a.cmp(b))
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::natural_order;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn names_order_as_filey_does() {
+        assert_eq!(natural_order("img2.png", "img10.png"), Ordering::Less);
+        assert_eq!(natural_order("B.png", "a.png"), Ordering::Greater);
+        assert_eq!(natural_order("a01.png", "a1.png"), "a01.png".cmp("a1.png"));
+    }
 }
 
 /// Pixbuf is not Send, so background decoding hands its pixels over in this form.
