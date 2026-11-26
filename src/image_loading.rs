@@ -51,16 +51,28 @@ pub fn directory_images(current: &Path) -> Result<Vec<PathBuf>> {
 /// ",desc" after it the other way round, as Filey passes it; by name without it. Ties go by name.
 fn sort_as_launched(files: &mut [PathBuf]) {
     let order = std::env::var("FILEY_SORT").unwrap_or_default();
-    let (key, descending) = order.split_once(',').map_or((order.as_str(), false), |(key, way)| (key, way == "desc"));
-    let name = |path: &PathBuf| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let extension = |path: &PathBuf| path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let (key, descending) = order
+        .split_once(',')
+        .map_or((order.as_str(), false), |(key, way)| (key, way == "desc"));
+    let name = |path: &PathBuf| {
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let extension = |path: &PathBuf| {
+        path.extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
     let metadata = |path: &PathBuf| fs::metadata(path).ok();
     let mut keyed: Vec<(PathBuf, String, String, u64, std::time::SystemTime)> = files
         .iter()
         .map(|path| {
             let meta = metadata(path);
             let size = meta.as_ref().map_or(0, |m| m.len());
-            let modified = meta.and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::UNIX_EPOCH);
             (path.clone(), name(path), extension(path), size, modified)
         })
         .collect();
@@ -73,7 +85,13 @@ fn sort_as_launched(files: &mut [PathBuf]) {
         };
         let by = if descending { by.reverse() } else { by };
         let names = natural_order(&a.1, &b.1);
-        by.then(if descending && key != "type" && key != "modified" && key != "size" { names.reverse() } else { names })
+        by.then(
+            if descending && key != "type" && key != "modified" && key != "size" {
+                names.reverse()
+            } else {
+                names
+            },
+        )
     });
     for (slot, (path, ..)) in files.iter_mut().zip(keyed) {
         *slot = path;
@@ -101,7 +119,9 @@ fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
             while jz < je && b[jz] == b'0' {
                 jz += 1;
             }
-            let by = (ie - iz).cmp(&(je - jz)).then_with(|| a[iz..ie].cmp(&b[jz..je]));
+            let by = (ie - iz)
+                .cmp(&(je - jz))
+                .then_with(|| a[iz..ie].cmp(&b[jz..je]));
             if by != Ordering::Equal {
                 return by;
             }

@@ -72,17 +72,17 @@ Modern Screenshot Annotation.
 `--actions-on-enter <ACTIONS_ON_ENTER>`
 :   Actions to perform when pressing Enter
 
-    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `exit`
+    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `copy-image-path-to-clipboard`, `exit`
 
 `--actions-on-escape <ACTIONS_ON_ESCAPE>`
 :   Actions to perform when pressing Escape
 
-    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `exit`
+    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `copy-image-path-to-clipboard`, `exit`
 
 `--actions-on-right-click <ACTIONS_ON_RIGHT_CLICK>`
 :   Actions to perform when hitting the copy Button
 
-    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `exit`
+    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `copy-image-path-to-clipboard`, `exit`
 
 `-d`, `--default-hide-toolbars`
 :   Hide toolbars by default
@@ -145,5 +145,5 @@ Modern Screenshot Annotation.
 `--action-on-enter <ACTION_ON_ENTER>`
 :   Action to perform when pressing Enter, deprecated since 0.19.0 Preferably use the `actions_on_enter` option instead
 
-    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `exit`
+    Possible values: `save-to-clipboard`, `save-to-file`, `save-to-file-as`, `copy-filepath-to-clipboard`, `copy-image-path-to-clipboard`, `exit`
 <!-- --8<-- [end:cli] -->
